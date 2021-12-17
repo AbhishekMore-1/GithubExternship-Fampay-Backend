@@ -21,3 +21,21 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls'))
 ]
+
+# The Code is put here in ulrs.py, so it will executes only once
+# Running Youtube task
+# There are sevaral options available for doing this
+# and they are listed below with code required
+from .tasks import youtubeVideoList
+
+# Run using thread + asyncio
+
+import threading
+backgroundThread = threading.Thread(target=youtubeVideoList,daemon=True)
+backgroundThread.start() 
+
+
+# Run using Celery + asyncio
+""" 
+youtubeVideoList.delay()
+ """
