@@ -7,4 +7,4 @@ class youtubeSerializer(serializers.HyperlinkedModelSerializer):
 
     class Meta:
         model = youtubeVideo
-        fields = ('url', 'videoTitle', 'description', 'publishDatetime', 'thumbnailURL')
+        fields = ('url', 'videoId', 'videoTitle', 'description', 'publishDatetime', 'thumbnailURL')
