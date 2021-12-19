@@ -2,7 +2,9 @@
 To make an API to fetch latest videos sorted in reverse chronological order of their publishing date-time from YouTube for a given tag/search query in a paginated response.
 
 ### Instruction for running the project
-
+<ul>
+   <li>Set environment variable <code>DEVELOPER_KEY</code> with one or more API keys separated by white space e.g. API_KEY_1 API_KEY_2</li> 
+</ul>
 <ol>
    <li>Install Python 3.10</li>
    <li>Install pipenv</li>
