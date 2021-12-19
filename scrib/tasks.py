@@ -1,4 +1,5 @@
 import asyncio
+import json
 from api.models import youtubeVideo
 import os
 
@@ -41,10 +42,21 @@ def fetchStoreVideosSync():
     from googleapiclient.errors import HttpError
     from time import sleep
     from datetime import datetime, timedelta
+    import tracemalloc
+
+    # For profiling the memory usage of task [ For Developmet Only ]
+    # as we are fetching json response which can be of size 1GB 
+    # so use appropriate maxResults value to meet the RAM needs
+    tracemalloc.start()
+    maxResults = 10
 
     # Building youtube client
-    DEVELOPER_KEY = os.environ['DEVELOPER_KEY']
-    youtubeClient = build('youtube', 'v3', developerKey=DEVELOPER_KEY)
+    # DEVELOPER_KEY is space separated list of API Keys
+    # e.g. API_KEY_1 API_KEY_2
+    # Converting "DEVELOPER_KEY" String into tuple
+    DEVELOPER_KEY = tuple(os.environ['DEVELOPER_KEY'].split())
+    KEY_INDEX = 0 # For keeping track of keys used 
+    youtubeClient = build('youtube', 'v3', developerKey=DEVELOPER_KEY[KEY_INDEX])
 
     # Getting latest and earliest video's publish date-time from our stored database
     try:
@@ -66,7 +78,8 @@ def fetchStoreVideosSync():
     if earliestPublishDatetime == assumedEarliestDatetime:
         publishedAfter = latestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-        # If, both are same, we will not get appropriate results, So wait for 10 seconds
+        # If, both are same, we will not get appropriate results, 
+        # So wait for 10 seconds
         if publishedAfter == publishedBefore:
             publishedBefore = (datetime.utcnow() + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
     else:
@@ -78,7 +91,7 @@ def fetchStoreVideosSync():
 
     # To run forever
     while(True):
-        # Asynchronously wait for 10 seconds
+        # Wait for 10 seconds
         sleep(10)
         
         try:
@@ -86,7 +99,7 @@ def fetchStoreVideosSync():
             # query term.
             searchResult = youtubeClient.search().list(
                 part = "snippet",
-                maxResults = 10,
+                maxResults = maxResults,
                 order = "date",
                 pageToken = nextPageToken,
                 publishedAfter = publishedAfter,
@@ -96,11 +109,25 @@ def fetchStoreVideosSync():
             ).execute()
 
         except HttpError as e:
-            print('An HTTP error %d occurred:\n%s' % (e.resp.status, e.content))
+            # Print HTTP error
+            response = json.loads(e.content)
+            print('An HTTP error %d occurred:\n%s' % (e.resp.status, json.dumps(response,indent=2)))
+
+            # Check if quota exceeded for given key then use next key
+            if response['error']['errors']['reason'] == 'quotaExceeded':
+                KEY_INDEX += 1
+                # If all keys are used and quota is exceeded then terminate the task
+                if KEY_INDEX == len(DEVELOPER_KEY):
+                    print("\n\n==== All Key's Quota Exceeded ====\n\n")
+                    return
+                youtubeClient = build('youtube', 'v3', developerKey=DEVELOPER_KEY[KEY_INDEX])
             continue
 
-        
         # Storing video details to database
+        # Here we considering all recieved videos are new
+        # but if not we will got to except block
+        # We are using bulk creation which reduce SQL hits 
+        # and reduce time consume by individual creation
         try:
             youtubeVideo.objects.bulk_create([
                 youtubeVideo(
@@ -114,12 +141,19 @@ def fetchStoreVideosSync():
             ])
 
         except:
+            # retrive complete list from stored database, 
+            # which are published between the recieved result latest and earliest publish time
             storedVideoIdList = youtubeVideo.objects.filter(
                 publishDatetime__lte = searchResult['items'][0]['snippet']['publishedAt'], 
                 publishDatetime__gte = searchResult['items'][9]['snippet']['publishedAt']
             ).values_list('videoId',flat=True)
+
+            # For storing the Models object for bulk create
             bulkObjectList = list()
             for video in searchResult.get('items', []):
+
+                # If video is not present in stored video,
+                # then append it to bulkObjectList
                 if video['id']['videoId'] not in storedVideoIdList:
                     bulkObjectList.append(
                         youtubeVideo(
@@ -130,9 +164,15 @@ def fetchStoreVideosSync():
                             thumbnailURL = video['snippet']['thumbnails']['high']['url']
                         )
                     )
+            
+            # If object list is not empty then perform bulk creation
             if bulkObjectList:
                 youtubeVideo.objects.bulk_create(bulkObjectList)
 
+        # If we update latest videos according to database 
+        # then we will go for more latest videos but 
+        # latestPublishDatetime have old value which should be updated, 
+        # here we use search result instead of hitting SQL
         if not nextPageToken and searchResult['items']:
             API_latestVideoPublishDatetime = datetime.strptime(
                 searchResult['items'][0]['snippet']['publishedAt'],
@@ -142,6 +182,11 @@ def fetchStoreVideosSync():
                 latestPublishDatetime = API_latestVideoPublishDatetime
 
         # Updating nextPageToken for accessing next page
+        # If we get nextPageToken in search result, 
+        # then we can update it 
+        # but if it is not present 
+        # then we have reached the end of search result 
+        # so, we wil update publishedAfter to latestPublishDatetime and search for latest videos
         if 'nextPageToken' in searchResult:
             nextPageToken = searchResult['nextPageToken']
         else:
@@ -151,7 +196,10 @@ def fetchStoreVideosSync():
             # If, both are same, we will not get appropriate results, So wait for 10 seconds
             if publishedAfter == publishedBefore:
                 publishedBefore = (datetime.utcnow() + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        print("Done")
+        
+        # Tracing Memory usage [ For Developmet Only ]
+        CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
+        print("Current Memory Uasge:",CurrentMemoryUsage/1024,"KB | Peak Memory Usage:",PeakMemoryUsage/1024,"KB")
 
 
 # Async API call Function
