@@ -3,6 +3,7 @@ import asyncio
 import json
 import tracemalloc
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import os
 from django.db import Error
 from asgiref.sync import sync_to_async
@@ -114,10 +115,17 @@ def fetchStoreVideosSync():
             # Check if quota exceeded for given key then use next key
             if response['error']['errors'][0]['reason'] == 'quotaExceeded':
                 KEY_INDEX += 1
-                # If all keys are used and quota is exceeded then terminate the task
+                # If all keys are used and quota is exceeded then wait for API quota reset
                 if KEY_INDEX == len(DEVELOPER_KEY):
-                    print("\n\n==== All Key's Quota Exceeded ====\n\n")
-                    return
+                    print("\n\n==== All Key's Quota Exceeded ====")
+                    print("==== Waiting for Quota to rest ====")
+                    # Calculating time remaining for quota reset i.e. Midnight Pacific time
+                    currTime = datetime.now().astimezone().astimezone(ZoneInfo("US/Pacific"))
+                    tomorrowMidnight = (currTime + timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
+                    waitingTime = tomorrowMidnight - currTime
+                    print("==== Waiting for",waitingTime,"====")
+                    sleep(waitingTime.total_seconds())
+                    KEY_INDEX = 0
                 youtubeClient = build('youtube', 'v3', developerKey=DEVELOPER_KEY[KEY_INDEX])
             # Continue the loop
             continue
@@ -302,11 +310,20 @@ async def fetchStoreVideosAsync():
             # Check if quota exceeded for given key then use next key
             if searchResult['error']['errors'][0]['reason'] == 'quotaExceeded':
                 KEY_INDEX += 1
-                # If all keys are used and quota is exceeded then terminate the task
+                # If all keys are used and quota is exceeded then wait for API quota reset
                 if KEY_INDEX == len(DEVELOPER_KEY):
-                    print("\n\n==== All Key's Quota Exceeded ====\n\n")
+                    print("\n\n==== All Key's Quota Exceeded ====")
+                    print("==== Waiting for Quota to rest ====")
+                    # Closing http session to free up memory
                     await session.close()
-                    return
+                    # Calculating time remaining for quota reset i.e. Midnight Pacific time
+                    currTime = datetime.now().astimezone().astimezone(ZoneInfo("US/Pacific"))
+                    tomorrowMidnight = (currTime + timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
+                    waitingTime = tomorrowMidnight - currTime
+                    print("==== Waiting for",waitingTime,"====")
+                    await asyncio.sleep(waitingTime.total_seconds())
+                    session = ClientSession()
+                    KEY_INDEX = 0
             # Continue the loop
             continue
         
