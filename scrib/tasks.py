@@ -41,7 +41,7 @@ def fetchStoreVideosSync():
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
     tracemalloc.start()
-    maxResults = 10
+    maxResults = 100
 
     # Building youtube client
     # DEVELOPER_KEY is space separated list of API Keys
@@ -79,6 +79,10 @@ def fetchStoreVideosSync():
         publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         publishedBefore = earliestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
     
+    # Printing Publish after/before for getting insights of progress
+    print("\n\n ==== Publish Before:", publishedBefore, "====")
+    print(" ==== Publish After:", publishedAfter, "==== \n\n")
+
     # For keeping track of next Page token
     nextPageToken = ""
 
@@ -186,7 +190,9 @@ def fetchStoreVideosSync():
         else:
             nextPageToken = ""
             publishedAfter = (latestPublishDatetime + timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            print('Reached End:', publishedAfter)
+            # For Acknoledgement, that we have reached end of current result
+            # now we will go for updated search query
+            print('\n\n==== Reached End | New Publish After:', publishedAfter,"====\n\n")
             publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
             # If, both are same, we will not get appropriate results, So wait for 10 seconds
             if publishedAfter == publishedBefore:

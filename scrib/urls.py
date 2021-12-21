@@ -16,10 +16,13 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from django.urls.conf import include
+from django.views.static import serve
+from django.conf import settings
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('api.urls'))
+    path('api/', include('api.urls')),
+    path('', serve, {'path':'index.html','document_root' : settings.STATICFILES_DIRS[0]})
 ]
 
 # The Code is put here in ulrs.py, so it will executes only once

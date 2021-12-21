@@ -6,9 +6,9 @@ from rest_framework.pagination import PageNumberPagination
 
 # Custom Pagination for better serving/view
 class CustomPagination(PageNumberPagination):
-    page_size = 10
+    page_size = 12
     page_size_query_param = 'pageSize'
-    max_page_size = 1000
+    max_page_size = 80
 
 # Custom Filter for Publish After and Publish Before Option
 class dateTimeFilter(filters.BaseFilterBackend):
