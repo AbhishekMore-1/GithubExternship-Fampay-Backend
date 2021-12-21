@@ -1,11 +1,11 @@
 from api.models import youtubeVideo
 import asyncio
-import concurrent.futures
 import json
 import tracemalloc
 from datetime import datetime, timedelta
 import os
 from django.db import Error
+from asgiref.sync import sync_to_async
 
 
 # Background task to be run
@@ -19,16 +19,16 @@ def youtubeVideoList():
     # such as aiohttp to make async API call and improve performance
 
     # Async API call using asyncio and aiohttp
-    """ try:
+    try:
         curr_loop = asyncio.get_event_loop()
     except:
         curr_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(curr_loop)
     
-    curr_loop.run_until_complete(fetchStoreVideosAsync()) """
+    curr_loop.run_until_complete(fetchStoreVideosAsync())
 
     # Sync call
-    fetchStoreVideosSync()
+    """ fetchStoreVideosSync() """
 
 
 # Sync API call function
@@ -43,12 +43,13 @@ def fetchStoreVideosSync():
     tracemalloc.start()
     maxResults = 100
 
-    # Building youtube client
     # DEVELOPER_KEY is space separated list of API Keys
     # e.g. API_KEY_1 API_KEY_2
     # Converting "DEVELOPER_KEY" String into tuple
     DEVELOPER_KEY = tuple(os.environ['DEVELOPER_KEY'].split())
     KEY_INDEX = 0 # For keeping track of keys used 
+
+    # Building youtube client
     youtubeClient = build('youtube', 'v3', developerKey=DEVELOPER_KEY[KEY_INDEX])
 
     # Getting latest and earliest video's publish date-time from our stored database
@@ -138,12 +139,15 @@ def fetchStoreVideosSync():
                 for video in searchResult.get('items', [])
             ])
 
-        except:
+        except Error as e:
+            # To keep track of how many errors are occuring
+            # helpful for optimising algorithm 
+            print(e)
             # retrive complete list from stored database, 
-            # which are published between the recieved result latest and earliest publish time
+            # which are published between the recieved result's latest and earliest publish time
             storedVideoIdList = youtubeVideo.objects.filter(
                 publishDatetime__lte = searchResult['items'][0]['snippet']['publishedAt'], 
-                publishDatetime__gte = searchResult['items'][9]['snippet']['publishedAt']
+                publishDatetime__gte = searchResult['items'][-1]['snippet']['publishedAt']
             ).values_list('videoId',flat=True)
 
             # For storing the Models object for bulk create
@@ -203,37 +207,25 @@ def fetchStoreVideosSync():
         print("Current Memory Uasge:",CurrentMemoryUsage/1024,"KB | Peak Memory Usage:",PeakMemoryUsage/1024,"KB")
 
 
-# Function for Asynchronous Database Operations
-async def AsyncDatabase(modelObject, args = None):
-    # Getting Event loop for async operation
-    try:
-        curr_loop = asyncio.get_event_loop()
-    except:
-        curr_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(curr_loop)
-    
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Waiting asynchronously for operation
-        if modelObject == youtubeVideo.objects.bulk_create:
-            return await curr_loop.run_in_executor( executor, modelObject, args )
-        elif modelObject ==youtubeVideo.objects.values_list('videoId', flat=True).filter:
-            return await curr_loop.run_in_executor( executor, modelObject, 
-                publishDatetime__lte = args[0], 
-                publishDatetime__gte = args[1] )
-        return await curr_loop.run_in_executor( executor, modelObject )
+
+# Function for filter operation on model object
+# as model queries are lazy and not evalute until forcing it by some function
+# such as list()
+def modelFilter(publishDatetime_lte,publishDatetime_gte):
+    return list(youtubeVideo.objects.filter(
+                publishDatetime__lte = publishDatetime_lte, 
+                publishDatetime__gte = publishDatetime_gte
+            ).values_list('videoId',flat=True))
 
 # Async API call Function
 async def fetchStoreVideosAsync():
     from aiohttp import ClientSession
 
-    # Creating Asynchronous http session
-    session = ClientSession()
-
     # For profiling the memory usage of task [ For Developmet Only ]
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
     tracemalloc.start()
-    maxResults = 10
+    maxResults = 100
 
     # DEVELOPER_KEY is space separated list of API Keys
     # e.g. API_KEY_1 API_KEY_2
@@ -241,12 +233,15 @@ async def fetchStoreVideosAsync():
     DEVELOPER_KEY = tuple(os.environ['DEVELOPER_KEY'].split())
     KEY_INDEX = 0 # For keeping track of keys used
 
+    # Creating Asynchronous http session
+    session = ClientSession()
+
     # Getting latest and earliest video's publish date-time from our stored database
     try:
-        latestPublishDatetime = await AsyncDatabase(youtubeVideo.objects.latest)
+        latestPublishDatetime = await sync_to_async(youtubeVideo.objects.latest)()
         latestPublishDatetime = latestPublishDatetime.publishDatetime
 
-        earliestPublishDatetime = await AsyncDatabase(youtubeVideo.objects.earliest)
+        earliestPublishDatetime = await sync_to_async(youtubeVideo.objects.earliest)()
         earliestPublishDatetime = earliestPublishDatetime.publishDatetime
     except:
         latestPublishDatetime = datetime.now().astimezone()
@@ -272,6 +267,10 @@ async def fetchStoreVideosAsync():
         publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         publishedBefore = earliestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
     
+    # Printing Publish after/before for getting insights of progress
+    print("\n\n ==== Publish Before:", publishedBefore, "====")
+    print(" ==== Publish After:", publishedAfter, "==== \n\n")
+
     # For keeping track of next Page token
     nextPageToken = ""
 
@@ -306,6 +305,7 @@ async def fetchStoreVideosAsync():
                 # If all keys are used and quota is exceeded then terminate the task
                 if KEY_INDEX == len(DEVELOPER_KEY):
                     print("\n\n==== All Key's Quota Exceeded ====\n\n")
+                    await session.close()
                     return
             # Continue the loop
             continue
@@ -316,9 +316,7 @@ async def fetchStoreVideosAsync():
         # We are using bulk creation which reduce SQL hits 
         # and reduce time consume by individual creation
         try:
-            print('In 1st Part')
-            await AsyncDatabase(
-                youtubeVideo.objects.bulk_create,
+            await sync_to_async(youtubeVideo.objects.bulk_create)(
                 [
                     youtubeVideo(
                         videoId = video['id']['videoId'],
@@ -332,19 +330,16 @@ async def fetchStoreVideosAsync():
             )
 
         except Error as e:
-            print('In 2nd Part: ',e)
+            # To keep track of how many errors are occuring
+            # helpful for optimising algorithm 
+            print(e)
             # retrive complete list from stored database, 
-            # which are published between the recieved result latest and earliest publish time
-            try:
-                print("Inside block")
-                storedVideoIdList = await AsyncDatabase(
-                    youtubeVideo.objects.values_list('videoId', flat=True).filter,
-                    (searchResult['items'][0]['snippet']['publishedAt'],
-                    searchResult['items'][9]['snippet']['publishedAt'])
-                )
-            except BaseException as e:
-                print("\n\n ==== Error ==== \n\n")
-                
+            # which are published between the recieved result's latest and earliest publish time
+            storedVideoIdList = await sync_to_async(modelFilter)(
+                publishDatetime_lte = searchResult['items'][0]['snippet']['publishedAt'], 
+                publishDatetime_gte = searchResult['items'][-1]['snippet']['publishedAt']
+            )
+
             # For storing the Models object for bulk create
             bulkObjectList = list()
             for video in searchResult.get('items', []):
@@ -364,7 +359,7 @@ async def fetchStoreVideosAsync():
             
             # If object list is not empty then perform bulk creation
             if bulkObjectList:
-                await AsyncDatabase(youtubeVideo.objects.bulk_create, bulkObjectList)
+                await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
 
         # If we update latest videos according to database 
         # then we will go for more latest videos but 
@@ -389,6 +384,9 @@ async def fetchStoreVideosAsync():
         else:
             nextPageToken = ""
             publishedAfter = (latestPublishDatetime + timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            # For Acknoledgement, that we have reached end of current result
+            # now we will go for updated search query
+            print('\n\n==== Reached End | New Publish After:', publishedAfter,"====\n\n")
             publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
             # If, both are same, we will not get appropriate results, So wait for 10 seconds
             if publishedAfter == publishedBefore:

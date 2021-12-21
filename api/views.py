@@ -17,7 +17,6 @@ class dateTimeFilter(filters.BaseFilterBackend):
     """
     def filter_queryset(self, request, queryset, view):
         publishedAfter = request.GET.get('publishedAfter', "2021-01-01T00:00:00Z")
-        print(publishedAfter)
         publishedBefore = request.GET.get('publishedBefore', datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'))
         return queryset.filter(
             publishDatetime__lte = publishedBefore, 
