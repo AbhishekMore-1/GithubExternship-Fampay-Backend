@@ -264,6 +264,8 @@ async def fetchStoreVideosAsync():
     # then we have covered all old videos and can go for only latest videos published after latestPublishDatetime
     # Else
     # we have to store old videos which are published before database's earliest video's publish date-time
+    publishedAfter = None
+    publishedBefore = None
     if earliestPublishDatetime == assumedEarliestDatetime:
         publishedAfter = latestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -320,9 +322,10 @@ async def fetchStoreVideosAsync():
                     currTime = datetime.now().astimezone().astimezone(ZoneInfo("US/Pacific"))
                     tomorrowMidnight = (currTime + timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
                     waitingTime = tomorrowMidnight - currTime
-                    print("==== Waiting for",waitingTime,"====")
+                    print("==== Waiting for",waitingTime,"====\n\n")
                     await asyncio.sleep(waitingTime.total_seconds())
                     session = ClientSession()
+                    print("\n\n==== Starting Background Task ====\n\n")
                     KEY_INDEX = 0
             # Continue the loop
             continue
@@ -376,7 +379,13 @@ async def fetchStoreVideosAsync():
             
             # If object list is not empty then perform bulk creation
             if bulkObjectList:
-                await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
+                try:
+                    await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
+                except:
+                    print("\n\n ==== Stored Video List ==== \n")
+                    print("Count:",len(storedVideoIdList),"| Publish Before:",searchResult['items'][0]['snippet']['publishedAt'],"| Publish After:",searchResult['items'][-1]['snippet']['publishedAt'])
+                    print("\n\n ==== Filtered Retrived Video List ==== \n")
+                    print("Count:",len(bulkObjectList),"| Publish Before:",bulkObjectList[0].publishDatetime,"| Publish After:",bulkObjectList[-1].publishDatetime)
 
         # If we update latest videos according to database 
         # then we will go for more latest videos but 

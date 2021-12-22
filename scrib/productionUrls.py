@@ -24,7 +24,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
     path('', serve, {'path':'index.html','document_root' : settings.STATIC_ROOT}),
-    re_path(r'^%s(?P<path>.*)$' % escape(settings.STATIC_URL), serve, {'document_root' : settings.STATIC_ROOT})
+    re_path(r'^%s(?P<path>.*)$' % escape(settings.STATIC_URL.lstrip('/')), serve, {'document_root' : settings.STATIC_ROOT})
 ]
 
 # The Code is put here in ulrs.py, so it will executes only once
