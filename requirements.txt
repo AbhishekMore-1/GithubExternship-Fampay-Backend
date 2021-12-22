@@ -1,0 +1,5 @@
+django==4.0
+djangorestframework==3.13.1
+celery==5.2.1
+google-api-python-client==2.33.0
+aiohttp==3.8.1

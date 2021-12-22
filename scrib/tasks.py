@@ -212,7 +212,7 @@ def fetchStoreVideosSync():
         
         # Tracing Memory usage [ For Developmet Only ]
         CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
-        print("Current Memory Uasge:",CurrentMemoryUsage/1024,"KB | Peak Memory Usage:",PeakMemoryUsage/1024,"KB")
+        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB")
 
 
 
@@ -411,4 +411,4 @@ async def fetchStoreVideosAsync():
         
         # Tracing Memory usage [ For Developmet Only ]
         CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
-        print("Current Memory Uasge:",CurrentMemoryUsage/1024,"KB | Peak Memory Usage:",PeakMemoryUsage/1024,"KB")
+        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB")
