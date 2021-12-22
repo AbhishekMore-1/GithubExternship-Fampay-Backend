@@ -2,7 +2,7 @@ from api.models import youtubeVideo
 import asyncio
 import json
 import tracemalloc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import os
 from django.db import Error
@@ -38,6 +38,9 @@ def fetchStoreVideosSync():
     from googleapiclient.errors import HttpError
     from time import sleep
 
+    # Waiting for Django App to start completely
+    sleep(10)
+
     # For profiling the memory usage of task [ For Developmet Only ]
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
@@ -58,11 +61,11 @@ def fetchStoreVideosSync():
         latestPublishDatetime = youtubeVideo.objects.latest().publishDatetime
         earliestPublishDatetime = youtubeVideo.objects.earliest().publishDatetime
     except:
-        latestPublishDatetime = datetime.now().astimezone()
+        latestPublishDatetime = datetime.now(timezone.utc)
         earliestPublishDatetime = latestPublishDatetime
 
     # Assumed Earliest Datetime
-    assumedEarliestDatetime = datetime(year=2021,month=1,day=1)
+    assumedEarliestDatetime = datetime(year=2021,month=12,day=12,tzinfo=timezone.utc)
     # For keeping track of latest video from API result
     API_latestVideoPublishDatetime= ""
 
@@ -104,7 +107,8 @@ def fetchStoreVideosSync():
                 publishedAfter = publishedAfter,
                 publishedBefore = publishedBefore,
                 q = "cricket",
-                type = "video"
+                type = "video",
+                eventType="completed"
             ).execute()
 
         except HttpError as e:
@@ -115,17 +119,25 @@ def fetchStoreVideosSync():
             # Check if quota exceeded for given key then use next key
             if response['error']['errors'][0]['reason'] == 'quotaExceeded':
                 KEY_INDEX += 1
+
                 # If all keys are used and quota is exceeded then wait for API quota reset
                 if KEY_INDEX == len(DEVELOPER_KEY):
                     print("\n\n==== All Key's Quota Exceeded ====")
                     print("==== Waiting for Quota to rest ====")
+
                     # Calculating time remaining for quota reset i.e. Midnight Pacific time
                     currTime = datetime.now().astimezone().astimezone(ZoneInfo("US/Pacific"))
                     tomorrowMidnight = (currTime + timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
                     waitingTime = tomorrowMidnight - currTime
                     print("==== Waiting for",waitingTime,"====")
+
+                    # Waiting for API key's quota to reset
                     sleep(waitingTime.total_seconds())
+
+                    print("\n\n==== Key's Quota Reset ====")
+                    print("==== Starting Background Task ====\n\n")
                     KEY_INDEX = 0
+                
                 youtubeClient = build('youtube', 'v3', developerKey=DEVELOPER_KEY[KEY_INDEX])
             # Continue the loop
             continue
@@ -229,6 +241,9 @@ def modelFilter(publishDatetime_lte,publishDatetime_gte):
 async def fetchStoreVideosAsync():
     from aiohttp import ClientSession
 
+    # Waiting for Django App to start completely
+    await asyncio.sleep(10)
+
     # For profiling the memory usage of task [ For Developmet Only ]
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
@@ -252,11 +267,11 @@ async def fetchStoreVideosAsync():
         earliestPublishDatetime = await sync_to_async(youtubeVideo.objects.earliest)()
         earliestPublishDatetime = earliestPublishDatetime.publishDatetime
     except:
-        latestPublishDatetime = datetime.now().astimezone()
+        latestPublishDatetime = datetime.now(timezone.utc)
         earliestPublishDatetime = latestPublishDatetime
 
     # Assumed Earliest Datetime
-    assumedEarliestDatetime = datetime(year=2021,month=1,day=1)
+    assumedEarliestDatetime = datetime(year=2021,month=12,day=12,tzinfo=timezone.utc)
     # For keeping track of latest video from API result
     API_latestVideoPublishDatetime= ""
 
@@ -264,8 +279,6 @@ async def fetchStoreVideosAsync():
     # then we have covered all old videos and can go for only latest videos published after latestPublishDatetime
     # Else
     # we have to store old videos which are published before database's earliest video's publish date-time
-    publishedAfter = None
-    publishedBefore = None
     if earliestPublishDatetime == assumedEarliestDatetime:
         publishedAfter = latestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -290,7 +303,7 @@ async def fetchStoreVideosAsync():
         await asyncio.sleep(10)
     
         # API URL Building
-        url = 'https://youtube.googleapis.com/youtube/v3/search?part=snippet&order=date&q=cricket&type=video'
+        url = 'https://youtube.googleapis.com/youtube/v3/search?part=snippet&order=date&q=cricket&type=video&eventType=completed'
         url = url + '&pageToken=' + nextPageToken
         url = url + '&maxResults=' + str(maxResults)
         url = url + '&publishedBefore=' + publishedBefore
@@ -312,20 +325,28 @@ async def fetchStoreVideosAsync():
             # Check if quota exceeded for given key then use next key
             if searchResult['error']['errors'][0]['reason'] == 'quotaExceeded':
                 KEY_INDEX += 1
+
                 # If all keys are used and quota is exceeded then wait for API quota reset
                 if KEY_INDEX == len(DEVELOPER_KEY):
                     print("\n\n==== All Key's Quota Exceeded ====")
                     print("==== Waiting for Quota to rest ====")
+
                     # Closing http session to free up memory
                     await session.close()
+
                     # Calculating time remaining for quota reset i.e. Midnight Pacific time
                     currTime = datetime.now().astimezone().astimezone(ZoneInfo("US/Pacific"))
                     tomorrowMidnight = (currTime + timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
                     waitingTime = tomorrowMidnight - currTime
-                    print("==== Waiting for",waitingTime,"====\n\n")
+                    print("==== Waiting for",waitingTime," time ====\n\n")
+
+                    # Asynchronously waiting for API key's quota reset
                     await asyncio.sleep(waitingTime.total_seconds())
+
+                    # Restarting the http client
                     session = ClientSession()
-                    print("\n\n==== Starting Background Task ====\n\n")
+                    print("\n\n==== Key's Quota Reset ====")
+                    print("==== Starting Background Task ====\n\n")
                     KEY_INDEX = 0
             # Continue the loop
             continue
@@ -379,13 +400,7 @@ async def fetchStoreVideosAsync():
             
             # If object list is not empty then perform bulk creation
             if bulkObjectList:
-                try:
-                    await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
-                except:
-                    print("\n\n ==== Stored Video List ==== \n")
-                    print("Count:",len(storedVideoIdList),"| Publish Before:",searchResult['items'][0]['snippet']['publishedAt'],"| Publish After:",searchResult['items'][-1]['snippet']['publishedAt'])
-                    print("\n\n ==== Filtered Retrived Video List ==== \n")
-                    print("Count:",len(bulkObjectList),"| Publish Before:",bulkObjectList[0].publishDatetime,"| Publish After:",bulkObjectList[-1].publishDatetime)
+                await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
 
         # If we update latest videos according to database 
         # then we will go for more latest videos but 
