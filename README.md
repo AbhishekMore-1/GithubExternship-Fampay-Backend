@@ -6,7 +6,7 @@ To make an API to fetch latest videos sorted in reverse chronological order of t
 
 <hr>
 
-### Problem Statement
+### 🗒 Problem Statement
 <details>
   <summary>Click to expand</summary>
    
@@ -41,7 +41,7 @@ Without publishedAfter, it will give you cached results which will be too old
 
 <hr>
    
-### Instruction for running the project
+### 🎰 Instruction for running the project
    
 <details>
   <summary>Click to expand
@@ -88,22 +88,28 @@ Without publishedAfter, it will give you cached results which will be too old
  </details>
  <hr>
    
- ### Deployment
+ ### 🚀 Deployment
    
- - Deployed on `Azure Cloud`
+ - Deployed on ![Microsoft Azure](https://img.shields.io/badge/Microsoft_Azure-232F7E?style=flat-square&logo=microsoft-azure&logoColor=white)
  - Dashboard Link: https://scrib1.azurewebsites.net/
  - API Link: https://scrib1.azurewebsites.net/api/youtubeVideos/
    
  <hr>
    
- ### Tech Stack
-   Django | Django REST Framework | SQLite | HTML | CSS | JavaScript
+ ### 🛠 Tech Stack
+  ![python](https://img.shields.io/badge/-Python-3776AB?style=for-the-badge&logo=Python&logoColor=white)
+  ![Django](https://img.shields.io/badge/-Django-092E20?style=for-the-badge&logo=Django&logoColor=white)
+  ![Django REST Framework](https://img.shields.io/badge/-Django_REST_Framework-8f3900?style=for-the-badge&logo=Django&logoColor=white)
+  ![SQLite](https://img.shields.io/badge/-SQLite-003B57?style=for-the-badge&logo=SQLite&logoColor=white)
+  ![HTML5](https://img.shields.io/badge/-HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white)
+  ![CSS3](https://img.shields.io/badge/-CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white)
+  ![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=for-the-badge&logo=JavaScript&logoColor=black)
    
  `Note:` For low cost deployment I have used SQLite. This Web-app is compatible with PostgreSQL, MariaDB, MySQL, Oracle [ Thanks to Django ORM :) ]
    
  <hr>
 
- ## Strategy used
+ ## 🎯 Strategy used
    
 #### Highlights of Algorithm
 - `In one cycle only 1 API call and 1 Database query`
@@ -111,6 +117,9 @@ Without publishedAfter, it will give you cached results which will be too old
 - If this app is deployed on `single core & single thread` hardware, it will still give good performnce due to its `Async Background Task Function`
 - Auto wait for API key's quota reset
 
+<details>
+  <summary>Know More about Algorithm</summary>
+  
 #### Bachground Task Options
  - We can use Thread/Celery for fetching Youtube videos list
  - I have given option for both. But, I have tested only Thread method
@@ -130,3 +139,36 @@ Without publishedAfter, it will give you cached results which will be too old
 
 > For More Verbose Algorithm checkout comments of [`scrib/tasks.py`](https://github.com/AbhishekMore-1/GithubExternship-Fampay-Backend/blob/main/scrib/tasks.py)
 
+</details>
+<hr>
+  
+## 😎 Challenges vs Hacks
+  
+<table>
+  <thead align="center">
+    <tr>
+      <td><strong>Challenges</strong></td>
+      <td><strong>Hacks</strong></td>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Background Task Algorithm</td>
+      <td>Note down all scenario [ Same video in API response ]<br>
+      Find simple flow<br>
+      Optimise flow [ Minimise DB query & API call ]</td>
+    </tr>
+    <tr>
+      <td>Async version of background task</td>
+      <td>Used asyncio & aiohttp for async Youtube Data API call<br>
+      Craft general API url string</td>
+    </tr>
+    <tr>
+      <td>Async database query</td>
+      <td>Used sync_to_async function from asgiref.sync<br>
+      Custom function for filter query</td>
+    </tr>
+  </tbody>
+ </table>
+
+> For Complete Journey of Challenges Vs Hacks, checkout [`comments of commits`](https://github.com/AbhishekMore-1/GithubExternship-Fampay-Backend/commits/main)
