@@ -44,7 +44,8 @@ def fetchStoreVideosSync():
     # For profiling the memory usage of task [ For Developmet Only ]
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
-    tracemalloc.start()
+    """ tracemalloc.start() """
+    # I don't find any memory leak or high memory consumption from this function after testing
     maxResults = 100
 
     # DEVELOPER_KEY is space separated list of API Keys
@@ -223,19 +224,14 @@ def fetchStoreVideosSync():
                 publishedBefore = (datetime.utcnow() + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
         # Tracing Memory usage [ For Developmet Only ]
-        CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
-        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB")
+        """ CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
+        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB") """
+
+        # Printing
+        if searchResult['items']:
+            print("Cycle completed | Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
 
 
-
-# Function for filter operation on model object
-# as model queries are lazy and not evalute until forcing it by some function
-# such as list()
-def modelFilter(publishDatetime_lte,publishDatetime_gte):
-    return list(youtubeVideo.objects.filter(
-                publishDatetime__lte = publishDatetime_lte, 
-                publishDatetime__gte = publishDatetime_gte
-            ).values_list('videoId',flat=True))
 
 # Async API call Function
 async def fetchStoreVideosAsync():
@@ -247,7 +243,8 @@ async def fetchStoreVideosAsync():
     # For profiling the memory usage of task [ For Developmet Only ]
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
-    tracemalloc.start()
+    """ tracemalloc.start() """
+    # I don't find any memory leak or high memory consumption from this function after testing
     maxResults = 100
 
     # DEVELOPER_KEY is space separated list of API Keys
@@ -376,10 +373,13 @@ async def fetchStoreVideosAsync():
             print(e)
             # retrive complete list from stored database, 
             # which are published between the recieved result's latest and earliest publish time
-            storedVideoIdList = await sync_to_async(modelFilter)(
-                publishDatetime_lte = searchResult['items'][0]['snippet']['publishedAt'], 
-                publishDatetime_gte = searchResult['items'][-1]['snippet']['publishedAt']
-            )
+            tempQuery = youtubeVideo.objects.filter(
+                        publishDatetime__lte = searchResult['items'][0]['snippet']['publishedAt'], 
+                        publishDatetime__gte = searchResult['items'][-1]['snippet']['publishedAt']
+                    ).values_list('videoId',flat=True)
+            
+            storedVideoIdList = await sync_to_async(set)(tempQuery)
+            print(storedVideoIdList)
 
             # For storing the Models object for bulk create
             bulkObjectList = list()
@@ -400,7 +400,38 @@ async def fetchStoreVideosAsync():
             
             # If object list is not empty then perform bulk creation
             if bulkObjectList:
-                await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
+                try:
+                    await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
+                except:
+                    # For the wildest case
+                    # Sometime Youtube Data API does not return appropriate results
+                    # like publish after/before sometime not followed
+                    tempQuery = youtubeVideo.objects.filter(
+                                videoId__in= [ video['id']['videoId'] for video in searchResult.get('items', []) ]
+                            ).values_list('videoId',flat=True)
+                    
+                    sameVideoAsDatabase = sync_to_async(set)(tempQuery)
+
+                    print("Youtube API Error | Same Video found:")
+                    print(sameVideoAsDatabase)
+
+                    # For storing the Models object for bulk create
+                    bulkObjectList = list()
+                    for video in searchResult.get('items', []):
+
+                        # If video is not present in stored video,
+                        # then append it to bulkObjectList
+                        if video['id']['videoId'] not in sameVideoAsDatabase:
+                            bulkObjectList.append(
+                                youtubeVideo(
+                                    videoId = video['id']['videoId'],
+                                    videoTitle = video['snippet']['title'],
+                                    description = video['snippet']['description'],
+                                    publishDatetime = video['snippet']['publishedAt'],
+                                    thumbnailURL = video['snippet']['thumbnails']['high']['url']
+                                )
+                            )
+                    await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
 
         # If we update latest videos according to database 
         # then we will go for more latest videos but 
@@ -434,5 +465,9 @@ async def fetchStoreVideosAsync():
                 publishedBefore = (datetime.utcnow() + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
         # Tracing Memory usage [ For Developmet Only ]
-        CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
-        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB")
+        """ CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
+        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB") """
+
+        # Printing
+        if searchResult['items']:
+            print("Cycle completed | Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
