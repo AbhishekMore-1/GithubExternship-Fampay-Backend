@@ -233,7 +233,7 @@ def fetchStoreVideosSync():
 
 # Async API call Function
 async def fetchStoreVideosAsync():
-    from aiohttp import ClientSession
+    from aiohttp import ClientSession, ClientError
 
     # Waiting for Django App to start completely
     await asyncio.sleep(10)
@@ -322,11 +322,12 @@ async def fetchStoreVideosAsync():
         url = url + '&key=' + DEVELOPER_KEY[KEY_INDEX]
 
         # Making Asynchronous request to API
-        async with session.get(url) as resp:
-            data = await resp.read()
-        
-        # Converting Byte data to dictionary
-        searchResult = json.loads(data)
+        try:
+            async with session.get(url) as response:
+                searchResult = await response.json()
+        except ClientError as e:
+            print("A HTTP Client Error Occured:",e)
+            continue
 
         # If we encounter HTTP error
         if 'error' in searchResult:
