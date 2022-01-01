@@ -286,17 +286,17 @@ async def fetchStoreVideosAsync():
     # For keeping track of latest video from API result
     API_latestVideoPublishDatetime= ""
 
-    # If earliest video is publish on "2021-12-23T00:00:00Z" 
-    # then we have covered all old videos and can go for only latest videos published after latestPublishDatetime
-    # Else
-    # we have to store old videos which are published before database's earliest video's publish date-time
+    # If Earliest Publish Datetime from database (earliestPublishDatetime) is same as 
+    # Earliest Publish Datetime from prvious search result (assumedEarliestDatetime)
+    # then we will wait for 10 seconds
+    # We are always considering old videos or searching for old videos,
+    # because there are chances that we may miss some videos 
+    # with same Publish Datetime as Assumed Earliest Datetime & Earliest Publish Datetime
     if earliestPublishDatetime == assumedEarliestDatetime:
-        publishedAfter = latestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
-        publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         # If, both are same, we will not get appropriate results, 
         # So wait for 10 seconds
-        if publishedAfter == publishedBefore:
-            publishedBefore = (datetime.utcnow() + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        publishedBefore = (earliestPublishDatetime + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
     else:
         publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
         publishedBefore = earliestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -350,7 +350,7 @@ async def fetchStoreVideosAsync():
                     currTime = datetime.now().astimezone().astimezone(ZoneInfo("US/Pacific"))
                     tomorrowMidnight = (currTime + timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
                     waitingTime = tomorrowMidnight - currTime
-                    print("==== Waiting for",waitingTime," time ====\n\n")
+                    print("==== Waiting for",waitingTime,"time ====\n\n")
 
                     # Asynchronously waiting for API key's quota reset
                     await asyncio.sleep(waitingTime.total_seconds())
