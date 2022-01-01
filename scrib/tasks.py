@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import os
 from django.db import Error
 from asgiref.sync import sync_to_async
+from django.utils.dateparse import parse_datetime
 
 
 # Background task to be run
@@ -197,10 +198,7 @@ def fetchStoreVideosSync():
         # latestPublishDatetime have old value which should be updated, 
         # here we use search result instead of hitting SQL
         if not nextPageToken and searchResult['items']:
-            API_latestVideoPublishDatetime = datetime.strptime(
-                searchResult['items'][0]['snippet']['publishedAt'],
-                '%Y-%m-%dT%H:%M:%S%z'
-            )
+            API_latestVideoPublishDatetime = parse_datetime(searchResult['items'][0]['snippet']['publishedAt'])
             if latestPublishDatetime < API_latestVideoPublishDatetime:
                 latestPublishDatetime = API_latestVideoPublishDatetime
 
@@ -256,23 +254,39 @@ async def fetchStoreVideosAsync():
     # Creating Asynchronous http session
     session = ClientSession()
 
+    # Assumed Earliest Datetime
+    # For Keeping track of previous search result's earliest datetime
+    # Let, our task interrupted before saving all results to database
+    # then we must store the remaining result in next boot
+    # for that purpose, I have used text file for storing single datetime value
+    filePath = os.path.join( os.path.dirname(__file__), 'assumedEarliestDatetime.txt' )
+    # If file exist, then read value
+    if(os.path.exists(filePath)):
+        filePointer = open(filePath)
+        assumedEarliestDatetime = parse_datetime(filePointer.read())
+        filePointer.close()
+    # Otherwise create file, write and use predefined value
+    else:
+        filePointer = open(filePath,"w")
+        assumedEarliestDatetime = datetime(year=2021,month=12,day=23,tzinfo=timezone.utc)
+        filePointer.write("2021-12-23T00:00:00Z")
+        filePointer.close()
+
     # Getting latest and earliest video's publish date-time from our stored database
     try:
         latestPublishDatetime = await sync_to_async(youtubeVideo.objects.latest)()
         latestPublishDatetime = latestPublishDatetime.publishDatetime
-
-        earliestPublishDatetime = await sync_to_async(youtubeVideo.objects.earliest)()
+        # Finding the Earliest Publish Datetime which is after Assumed Earliest Datetime 
+        earliestPublishDatetime = await sync_to_async(youtubeVideo.objects.filter(publishDatetime__gte = assumedEarliestDatetime).earliest)()
         earliestPublishDatetime = earliestPublishDatetime.publishDatetime
     except:
         latestPublishDatetime = datetime.now(timezone.utc)
         earliestPublishDatetime = latestPublishDatetime
-
-    # Assumed Earliest Datetime
-    assumedEarliestDatetime = datetime(year=2021,month=12,day=12,tzinfo=timezone.utc)
+    
     # For keeping track of latest video from API result
     API_latestVideoPublishDatetime= ""
 
-    # If earliest video is publish on "2021-01-01T00:00:00Z" 
+    # If earliest video is publish on "2021-12-23T00:00:00Z" 
     # then we have covered all old videos and can go for only latest videos published after latestPublishDatetime
     # Else
     # we have to store old videos which are published before database's earliest video's publish date-time
@@ -379,7 +393,6 @@ async def fetchStoreVideosAsync():
                     ).values_list('videoId',flat=True)
             
             storedVideoIdList = await sync_to_async(set)(tempQuery)
-            print(storedVideoIdList)
 
             # For storing the Models object for bulk create
             bulkObjectList = list()
@@ -405,12 +418,12 @@ async def fetchStoreVideosAsync():
                 except:
                     # For the wildest case
                     # Sometime Youtube Data API does not return appropriate results
-                    # like publish after/before sometime not followed
+                    # like publish after/before, sorting, event type is sometime not followed
                     tempQuery = youtubeVideo.objects.filter(
                                 videoId__in= [ video['id']['videoId'] for video in searchResult.get('items', []) ]
                             ).values_list('videoId',flat=True)
                     
-                    sameVideoAsDatabase = sync_to_async(set)(tempQuery)
+                    sameVideoAsDatabase = await sync_to_async(set)(tempQuery)
 
                     print("Youtube API Error | Same Video found:")
                     print(sameVideoAsDatabase)
@@ -433,15 +446,16 @@ async def fetchStoreVideosAsync():
                             )
                     await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
 
+        # Printing Datetime span, for which videos are stored in database
+        if searchResult['items']:
+            print("Cycle completed | Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
+
         # If we update latest videos according to database 
         # then we will go for more latest videos but 
         # latestPublishDatetime have old value which should be updated, 
         # here we use search result instead of hitting SQL
         if not nextPageToken and searchResult['items']:
-            API_latestVideoPublishDatetime = datetime.strptime(
-                searchResult['items'][0]['snippet']['publishedAt'],
-                '%Y-%m-%dT%H:%M:%S%z'
-            )
+            API_latestVideoPublishDatetime = parse_datetime(searchResult['items'][0]['snippet']['publishedAt'])
             if latestPublishDatetime < API_latestVideoPublishDatetime:
                 latestPublishDatetime = API_latestVideoPublishDatetime
 
@@ -459,6 +473,13 @@ async def fetchStoreVideosAsync():
             # For Acknoledgement, that we have reached end of current result
             # now we will go for updated search query
             print('\n\n==== Reached End | New Publish After:', publishedAfter,"====\n\n")
+
+            # Updating Assumed Earliest Datetime
+            filePointer = open(filePath,"w")
+            filePointer.write(publishedAfter)
+            filePointer.close()
+
+            # Updating publishedBefore to current UTC time 
             publishedBefore = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
             # If, both are same, we will not get appropriate results, So wait for 10 seconds
             if publishedAfter == publishedBefore:
@@ -467,7 +488,3 @@ async def fetchStoreVideosAsync():
         # Tracing Memory usage [ For Developmet Only ]
         """ CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
         print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB") """
-
-        # Printing
-        if searchResult['items']:
-            print("Cycle completed | Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
