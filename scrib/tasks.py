@@ -282,9 +282,6 @@ async def fetchStoreVideosAsync():
     except:
         latestPublishDatetime = datetime.now(timezone.utc)
         earliestPublishDatetime = latestPublishDatetime
-    
-    # For keeping track of latest video from API result
-    API_latestVideoPublishDatetime= ""
 
     # We are always considering old videos or searching for old videos,
     # because there are chances that we may miss some videos 
@@ -362,7 +359,11 @@ async def fetchStoreVideosAsync():
                     KEY_INDEX = 0
             # Continue the loop
             continue
-        
+
+        # For keeping track of oldest/latest video from API result's current page
+        API_oldestVideoPublishDatetime = datetime.now(timezone.utc)
+        API_latestVideoPublishDatetime = datetime.min.replace(tzinfo=timezone.utc)
+
         # We are filtering the search result as Youtube Data API sometime doesn't follow query parameters
         # Here we are filtering the search result for published before and published after parameter
         # Also, pagination give result from previous page. To handle this, we are also mainting
@@ -370,7 +371,6 @@ async def fetchStoreVideosAsync():
         # We are using bulk creation which reduce SQL hits 
         # and reduce time consume by individual creation
         bulkObjectList = list()
-        currentPageOldVideoDatetime = datetime.now(timezone.utc) # For tracking the result page's oldest video
 
         for video in searchResult.get('items', []):
 
@@ -378,9 +378,12 @@ async def fetchStoreVideosAsync():
             # Checking whether the video is published between previousPageEarliestDatetime and publishedAfter
             if videoPublishedAt <= previousPageEarliestDatetime and videoPublishedAt >= parse_datetime(publishedAfter):
 
-                # Updating the currentPageOldVideoDatetime to oldest video
-                if videoPublishedAt < currentPageOldVideoDatetime:
-                    currentPageOldVideoDatetime = videoPublishedAt
+                # Updating the API_oldestVideoPublishDatetime to oldest video
+                if videoPublishedAt < API_oldestVideoPublishDatetime:
+                    API_oldestVideoPublishDatetime = videoPublishedAt
+                # Updating the API_latestVideoPublishDatetime to latest video
+                if videoPublishedAt > API_latestVideoPublishDatetime:
+                    API_latestVideoPublishDatetime = videoPublishedAt
                 
                 bulkObjectList.append(
                     youtubeVideo(
@@ -403,10 +406,10 @@ async def fetchStoreVideosAsync():
             print(e)
 
             # retrive complete list from stored database, 
-            # which are published between the previousPageEarliestDatetime and currentPageOldVideoDatetime
+            # which are published between the API_latestVideoPublishDatetime and API_oldestVideoPublishDatetime
             tempQuery = youtubeVideo.objects.filter(
-                        publishDatetime__lte = previousPageEarliestDatetime, 
-                        publishDatetime__gte = currentPageOldVideoDatetime
+                        publishDatetime__lte = API_latestVideoPublishDatetime, 
+                        publishDatetime__gte = API_oldestVideoPublishDatetime
                     ).values_list('videoId',flat=True)
             
             storedVideoIdList = await sync_to_async(set)(tempQuery)
@@ -451,20 +454,21 @@ async def fetchStoreVideosAsync():
                 
                 await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
         
-        # Updating the value of previousPageEarliestDatetime, so it will be used for filtering the next result page
-        previousPageEarliestDatetime = currentPageOldVideoDatetime
-        # Printing Datetime span, for which videos are stored in database
-        if searchResult['items']:
-            print("Error Count:",YoutubeAPIErrorCount,"| Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
 
+        # Updating the value of previousPageEarliestDatetime, so it will be used for filtering the next result page
+        previousPageEarliestDatetime = API_oldestVideoPublishDatetime
+        
         # If we update latest videos according to database 
         # then we will go for more latest videos but 
         # latestPublishDatetime have old value which should be updated, 
         # here we use search result instead of hitting SQL
-        if not nextPageToken and searchResult['items']:
-            API_latestVideoPublishDatetime = parse_datetime(searchResult['items'][0]['snippet']['publishedAt'])
-            if latestPublishDatetime < API_latestVideoPublishDatetime:
+        if searchResult['items']:
+            # Printing Datetime span, for which videos are stored in database
+            print("Error Count:",YoutubeAPIErrorCount,"| Publish Datetime Span:",API_latestVideoPublishDatetime,"to",API_oldestVideoPublishDatetime)
+
+            if not nextPageToken and latestPublishDatetime < API_latestVideoPublishDatetime:
                 latestPublishDatetime = API_latestVideoPublishDatetime
+        
 
         # Updating nextPageToken for accessing next page
         # If we get nextPageToken in search result, 
