@@ -241,9 +241,9 @@ async def fetchStoreVideosAsync():
     # For profiling the memory usage of task [ For Developmet Only ]
     # as we are fetching json response which can be of size 1GB 
     # so use appropriate maxResults value to meet the RAM needs
-    """ tracemalloc.start() """
+    tracemalloc.start()
     # I don't find any memory leak or high memory consumption from this function after testing
-    maxResults = 100
+    maxResults = 50
 
     # DEVELOPER_KEY is space separated list of API Keys
     # e.g. API_KEY_1 API_KEY_2
@@ -286,20 +286,19 @@ async def fetchStoreVideosAsync():
     # For keeping track of latest video from API result
     API_latestVideoPublishDatetime= ""
 
-    # If Earliest Publish Datetime from database (earliestPublishDatetime) is same as 
-    # Earliest Publish Datetime from prvious search result (assumedEarliestDatetime)
-    # then we will wait for 10 seconds
     # We are always considering old videos or searching for old videos,
     # because there are chances that we may miss some videos 
     # with same Publish Datetime as Assumed Earliest Datetime & Earliest Publish Datetime
-    if earliestPublishDatetime == assumedEarliestDatetime:
-        publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
-        # If, both are same, we will not get appropriate results, 
-        # So wait for 10 seconds
-        publishedBefore = (earliestPublishDatetime + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    else:
-        publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
-        publishedBefore = earliestPublishDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
+    publishedAfter = assumedEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # For keeping track of result's previous page's earliest datetime
+    previousPageEarliestDatetime = earliestPublishDatetime
+
+    # If Earliest Publish Datetime from database (earliestPublishDatetime) is same as 
+    # Earliest Publish Datetime from prvious search result (assumedEarliestDatetime)
+    # then we will wait for 10 seconds
+    previousPageEarliestDatetime += timedelta(seconds=10) if earliestPublishDatetime == assumedEarliestDatetime else timedelta()
+    publishedBefore = previousPageEarliestDatetime.strftime('%Y-%m-%dT%H:%M:%SZ')
     
     # Printing Publish after/before for getting insights of progress
     print("\n\n ==== Publish Before:", publishedBefore, "====")
@@ -310,6 +309,7 @@ async def fetchStoreVideosAsync():
 
     # To run forever
     while(True):
+        YoutubeAPIErrorCount = 0
         # Asynchronous Wait for 10 seconds
         await asyncio.sleep(10)
     
@@ -363,93 +363,99 @@ async def fetchStoreVideosAsync():
             # Continue the loop
             continue
         
-        # Storing video details to database
-        # Here we considering all recieved videos are new
-        # but if not we will got to except block
+        # We are filtering the search result as Youtube Data API sometime doesn't follow query parameters
+        # Here we are filtering the search result for published before and published after parameter
+        # Also, pagination give result from previous page. To handle this, we are also mainting
+        # variable previousPageEarliestDatetime
         # We are using bulk creation which reduce SQL hits 
         # and reduce time consume by individual creation
-        try:
-            await sync_to_async(youtubeVideo.objects.bulk_create)(
-                [
+        bulkObjectList = list()
+        currentPageOldVideoDatetime = datetime.now(timezone.utc) # For tracking the result page's oldest video
+
+        for video in searchResult.get('items', []):
+
+            videoPublishedAt = parse_datetime(video['snippet']['publishedAt'])
+            # Checking whether the video is published between previousPageEarliestDatetime and publishedAfter
+            if videoPublishedAt <= previousPageEarliestDatetime and videoPublishedAt >= parse_datetime(publishedAfter):
+
+                # Updating the currentPageOldVideoDatetime to oldest video
+                if videoPublishedAt < currentPageOldVideoDatetime:
+                    currentPageOldVideoDatetime = videoPublishedAt
+                
+                bulkObjectList.append(
                     youtubeVideo(
                         videoId = video['id']['videoId'],
                         videoTitle = video['snippet']['title'],
                         description = video['snippet']['description'],
-                        publishDatetime = video['snippet']['publishedAt'],
+                        publishDatetime = videoPublishedAt,
                         thumbnailURL = video['snippet']['thumbnails']['high']['url']
                     )
-                    for video in searchResult.get('items', [])
-                ]
-            )
+                )
+            else:
+                YoutubeAPIErrorCount+=1
+
+        try:
+            await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
 
         except Error as e:
             # To keep track of how many errors are occuring
             # helpful for optimising algorithm 
             print(e)
+
             # retrive complete list from stored database, 
-            # which are published between the recieved result's latest and earliest publish time
+            # which are published between the previousPageEarliestDatetime and currentPageOldVideoDatetime
             tempQuery = youtubeVideo.objects.filter(
-                        publishDatetime__lte = searchResult['items'][0]['snippet']['publishedAt'], 
-                        publishDatetime__gte = searchResult['items'][-1]['snippet']['publishedAt']
+                        publishDatetime__lte = previousPageEarliestDatetime, 
+                        publishDatetime__gte = currentPageOldVideoDatetime
                     ).values_list('videoId',flat=True)
             
             storedVideoIdList = await sync_to_async(set)(tempQuery)
 
-            # For storing the Models object for bulk create
-            bulkObjectList = list()
-            for video in searchResult.get('items', []):
-
+            # If Youtube API pagination gives previous page videos with same published datetime as previousPageEarliestDatetime
+            # Then we have to look into video IDs for filtering them out
+            newBulkObjectList = list()
+            for video in bulkObjectList:
                 # If video is not present in stored video,
-                # then append it to bulkObjectList
-                if video['id']['videoId'] not in storedVideoIdList:
-                    bulkObjectList.append(
-                        youtubeVideo(
-                            videoId = video['id']['videoId'],
-                            videoTitle = video['snippet']['title'],
-                            description = video['snippet']['description'],
-                            publishDatetime = video['snippet']['publishedAt'],
-                            thumbnailURL = video['snippet']['thumbnails']['high']['url']
-                        )
-                    )
+                # then append it to newBulkObjectList
+                if video.videoId not in storedVideoIdList:
+                    newBulkObjectList.append(video)
+                else:
+                    YoutubeAPIErrorCount+=1
             
-            # If object list is not empty then perform bulk creation
-            if bulkObjectList:
-                try:
-                    await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
-                except:
-                    # For the wildest case
-                    # Sometime Youtube Data API does not return appropriate results
-                    # like publish after/before, sorting, event type is sometime not followed
-                    tempQuery = youtubeVideo.objects.filter(
-                                videoId__in= [ video['id']['videoId'] for video in searchResult.get('items', []) ]
-                            ).values_list('videoId',flat=True)
-                    
-                    sameVideoAsDatabase = await sync_to_async(set)(tempQuery)
+            try:
+                await sync_to_async(youtubeVideo.objects.bulk_create)(newBulkObjectList)
 
-                    print("Youtube API Error | Same Video found:")
-                    print(sameVideoAsDatabase)
+            except:
+                # If Youtube API didn't followed the event type contraint
+                # then for handling this, we have to go through each video's ID in database
+                # Youtube update the publishedAt attribute of video which are of type live/upcoming,
+                # when the user makes some updates in the video
+                tempQuery = youtubeVideo.objects.filter(
+                            videoId__in= [ video.videoId for video in newBulkObjectList ]
+                        ).values_list('videoId',flat=True)
+                
+                sameVideoAsDatabase = await sync_to_async(set)(tempQuery)
 
-                    # For storing the Models object for bulk create
-                    bulkObjectList = list()
-                    for video in searchResult.get('items', []):
+                print("Youtube API Error | Same Video found:")
+                print(sameVideoAsDatabase)
 
-                        # If video is not present in stored video,
-                        # then append it to bulkObjectList
-                        if video['id']['videoId'] not in sameVideoAsDatabase:
-                            bulkObjectList.append(
-                                youtubeVideo(
-                                    videoId = video['id']['videoId'],
-                                    videoTitle = video['snippet']['title'],
-                                    description = video['snippet']['description'],
-                                    publishDatetime = video['snippet']['publishedAt'],
-                                    thumbnailURL = video['snippet']['thumbnails']['high']['url']
-                                )
-                            )
-                    await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
-
+                # For storing the Models object for bulk create
+                bulkObjectList = list()
+                for video in newBulkObjectList:
+                    # If video is not present in stored video,
+                    # then append it to bulkObjectList
+                    if video.videoId not in sameVideoAsDatabase:
+                        bulkObjectList.append(video)
+                    else:
+                        YoutubeAPIErrorCount+=1
+                
+                await sync_to_async(youtubeVideo.objects.bulk_create)(bulkObjectList)
+        
+        # Updating the value of previousPageEarliestDatetime, so it will be used for filtering the next result page
+        previousPageEarliestDatetime = currentPageOldVideoDatetime
         # Printing Datetime span, for which videos are stored in database
         if searchResult['items']:
-            print("Cycle completed | Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
+            print("Error Count:",YoutubeAPIErrorCount,"| Publish Datetime Span:",searchResult['items'][0]['snippet']['publishedAt'],"to",searchResult['items'][-1]['snippet']['publishedAt'])
 
         # If we update latest videos according to database 
         # then we will go for more latest videos but 
@@ -487,5 +493,5 @@ async def fetchStoreVideosAsync():
                 publishedBefore = (datetime.utcnow() + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
         # Tracing Memory usage [ For Developmet Only ]
-        """ CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
-        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB") """
+        CurrentMemoryUsage, PeakMemoryUsage = tracemalloc.get_traced_memory()
+        print("Current Memory Uasge:",round(CurrentMemoryUsage/1024, 2),"KB | Peak Memory Usage:",round(PeakMemoryUsage/1024, 2),"KB")
